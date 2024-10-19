@@ -1,4 +1,5 @@
-const crypto = require('crypto');
+import * as crypto from 'crypto';
+import * as path from 'path';
 // For creating unique filenames to avoid overwriting existing files
 export const generateUniqueFilename = (originalName) => {
     // const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
