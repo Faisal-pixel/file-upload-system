@@ -168,75 +168,100 @@ const server = http.createServer((req, res) => {
         // Handle file retrieval here
         console.log("Retrieving file");
         const filename = pathname.replace('/files/', '');
-        const filepath = path.join(__dirname, 'files', filename);
-
-        // Security.I am trying to prevent driectory traversal. It is a security vulnerability that allows an attacker to access files
-        // by manipulating the path using ../ to access files outside the intended directory. Ensures users cant access files
-        // outside the uupload folder
-
-        if (!filepath.startsWith(path.join(__dirname, 'files'))) {
-            res.statusCode = 403;
-            return res.end('403 Forbidden. Invalid file path');
-        }
-
-        fs.readFile(filepath, (err, data) => {
-            if (err) {
-                res.statusCode = 404;
-                return res.end('404 - File Not Found');
+        let filePath = '';
+        fs.promises.readFile("metadata.json", 'utf8').then((metadata) => {
+            const metadataArray = JSON.parse(metadata);
+            metadataArray.find((metadata) => {
+                if(metadata.uniqueName.includes(filename)) {
+                    filePath = metadata.filePath;
+                }
+            });
+            return fs.promises.readFile(filePath)
+        }).then(fileData => {
+            try {
+                res.statusCode = 200;
+                res.statusMessage = 'OK';
+                res.end(fileData);
+            } catch (err) {
+                return res.end("Error while reading file", err)
             }
-            res.statusCode = 200;
-            res.end(data);
-            res.end('File retrieved successfully');
-        });
+        })
     } else if (pathname === '/files' && method === 'GET') {
         //List files
+        fs.readdir(path.join(__dirname, 'files'), (err, files) => {
+            if(err) {
+                res.statusCode = 404;
+                return res.end("Error reading files directory");
+            }
+
+            let filesObj = {};
+            let filesProcessed = 0;
+
+            files.forEach((file) => {
+                fs.readFile("metadata.json", 'utf8', (err, data) => {
+                    if(err) {
+                        res.statusCode = 404;
+                        return res.end("Error reading metadata file");
+                    }
+                    const metadataArray = JSON.parse(data);
+                    metadataArray.forEach((metadata, _) => {
+                        if(file.includes(metadata.uniqueName)) {
+                            filesObj[file] = metadata;
+                        }
+                    });
+
+                    filesProcessed++;
+                    if (filesProcessed === files.length) {
+                        // All files have been processed
+                        console.log(filesObj);
+                        res.write(JSON.stringify(filesObj));
+                        res.end("Files listed successfully");
+                    }
+                });     
+            });
+        });
     }  else if (pathname.startsWith("/files") && method === 'DELETE') {
         //Handle file deletion
         const filename = pathname.replace('/files/', '').replace('/delete', '');
         let pathToDelete = '';
 
-        fs.readFile('metadata.json', 'utf8', (err, data) => {
+        // We will need to get the path since we dont whether the filename passed by the user is going to have the extension.
+        // For this reason, we will have to loop through the metadata array to get the path of the file to delete.
+
+        fs.readFile("metadata.json", 'utf8', (err, data) => {
             if(err) {
-                res.statusCode = 500;
-                return res.end('500 - Error reading metadata');
+                res.statusCode = 404;
+                return res.end("Error reading metadata file");
             }
 
             const metadataArray = JSON.parse(data);
-            const currentFileMetadata = metadataArray.find((metadata) => metadata.originalName === filename);
-            pathToDelete = currentFileMetadata.uniqueName
-            console.log(pathToDelete);
-            fs.unlink(`./files/${pathToDelete}`, (err) => {
-                console.log(`./files/${pathToDelete}`)
-                if (err) {
-                    res.statusCode = 404;
-                    console.log(err)
-                    return res.end('404 - File Not Found');
+            metadataArray.forEach((metadata) => {
+                if(metadata.uniqueName.includes(filename)) {
+                    pathToDelete = metadata.filePath;
                 }
-    
-                //Update metadata
-                fs.readFile(path.join(__dirname, 'metadata.json'), 'utf8', (err, data) => {
-                    if(err) {
-                        res.statusCode = 500;
-                        return res.end('500 - Error reading metadata');
-                    }
-    
-                    const metadataArray = JSON.parse(data);
-                    const updatedMetadataArray = metadataArray.filter((metadata) => metadata.originalName !== filename);
-    
-                    fs.writeFile(path.join(__dirname, 'metadata.json'), JSON.stringify(updatedMetadataArray), (err) => {
-                        if(err) {
-                            res.statusCode = 500;
-                            return res.end('500 - Error updating metadata');
-                        }
-    
-                        res.statusCode = 200;
-                        res.end('File deleted successfully');
-                    });
-    
-                });
             });
+
+            // Loop through the metadata
+            // Look for the member that has the uniqeuName match the filename and filter it out, then set it back in the metadata.json file.
+            const updatedMetadata = metadataArray.filter((metadata) => !metadata.uniqueName.includes(filename));
+            fs.writeFile("metadata.json", JSON.stringify(updatedMetadata), (err) => {
+                if(err) {
+                    res.statusCode = 500;
+                    return res.end("Error deleting file", err);
+                }
+            });
+            // Then delete the file from the file system.
+
+            fs.unlink(pathToDelete, (err) => {
+                if(err) {
+                    res.statusCode = 404;
+                    return res.end("Error deleting file unlink", err);
+                }
+                res.statusCode = 200;
+                res.end("File deleted successfully");
+            });
+
         });
-        
     }
     
     else {
